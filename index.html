@@ -274,23 +274,56 @@
                     
                     // Fix: Restore Date objects for trades
                     if (key === 'optionsTrackerTrades' && Array.isArray(data)) {
-                        return data.map(trade => ({
-                            ...trade,
-                            dateObj: new Date(trade.date || trade.dateObj)
-                        }));
+                        return data.map(trade => {
+                            // Handle both old and new formats
+                            let dateObj;
+                            if (trade.dateObj && typeof trade.dateObj === 'string') {
+                                dateObj = new Date(trade.dateObj);
+                            } else if (trade.dateObj instanceof Date) {
+                                dateObj = trade.dateObj;
+                            } else if (trade.date) {
+                                dateObj = new Date(trade.date);
+                            } else {
+                                dateObj = new Date();
+                            }
+                            
+                            return {
+                                ...trade,
+                                dateObj: dateObj
+                            };
+                        });
                     }
                     
                     // Fix: Restore Date objects for dividends
                     if (key === 'optionsTrackerDividends' && Array.isArray(data)) {
-                        return data.map(dividend => ({
-                            ...dividend,
-                            dateObj: new Date(dividend.date || dividend.dateObj)
-                        }));
+                        return data.map(dividend => {
+                            let dateObj;
+                            if (dividend.dateObj && typeof dividend.dateObj === 'string') {
+                                dateObj = new Date(dividend.dateObj);
+                            } else if (dividend.dateObj instanceof Date) {
+                                dateObj = dividend.dateObj;
+                            } else if (dividend.date) {
+                                dateObj = new Date(dividend.date);
+                            } else {
+                                dateObj = new Date();
+                            }
+                            
+                            return {
+                                ...dividend,
+                                dateObj: dateObj
+                            };
+                        });
                     }
                     
                     return data;
                 } catch (e) {
                     console.error('Error loading from storage:', e);
+                    // Clear corrupted data
+                    try {
+                        localStorage.removeItem(key);
+                    } catch (err) {
+                        // Ignore
+                    }
                     return defaultValue;
                 }
             };
@@ -1083,7 +1116,7 @@
             const cardClass = darkMode ? 'bg-gray-800' : 'bg-white';
             const textClass = darkMode ? 'text-white' : 'text-gray-800';
             const subtextClass = darkMode ? 'text-gray-300' : 'text-gray-600';
-            const inputClass = darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300';
+            const inputClass = darkMode ? 'bg-gray-800 border-gray-600 text-white [color-scheme:dark]' : 'bg-white border-gray-300 [color-scheme:light]';
             const labelClass = darkMode ? 'text-gray-300' : 'text-gray-700';
 
             return (
@@ -1132,27 +1165,27 @@
                             
                             {/* Date Range Filter */}
                             <div className="flex flex-col gap-3">
-                                <div className="flex flex-col sm:flex-row gap-4 items-end">
-                                    <div className="flex-1">
-                                        <label className={`block text-sm font-medium mb-1 ${labelClass}`}>
+                                <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 items-end">
+                                    <div className="flex-1 w-full">
+                                        <label className={`block text-xs sm:text-sm font-medium mb-1 ${labelClass}`}>
                                             Start Date
                                         </label>
                                         <input
                                             type="date"
                                             value={dateRange.start}
                                             onChange={(e) => setDateRange(prev => ({ start: e.target.value, end: prev.end }))}
-                                            className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                            className={`w-full px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
                                         />
                                     </div>
-                                    <div className="flex-1">
-                                        <label className={`block text-sm font-medium mb-1 ${labelClass}`}>
+                                    <div className="flex-1 w-full">
+                                        <label className={`block text-xs sm:text-sm font-medium mb-1 ${labelClass}`}>
                                             End Date
                                         </label>
                                         <input
                                             type="date"
                                             value={dateRange.end}
                                             onChange={(e) => setDateRange(prev => ({ start: prev.start, end: e.target.value }))}
-                                            className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                            className={`w-full px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
                                         />
                                     </div>
                                     {(dateRange.start || dateRange.end) && (
@@ -2006,12 +2039,12 @@
                         )}
 
                         {!analysis && !dividendAnalysis && (
-                            <div className={`rounded-lg shadow-md p-12 text-center ${cardClass}`}>
-                                <svg className={`mx-auto h-12 w-12 mb-4 ${subtextClass}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <div className={`rounded-lg shadow-md p-6 sm:p-12 text-center ${cardClass}`}>
+                                <svg className={`mx-auto h-10 w-10 sm:h-12 sm:w-12 mb-3 sm:mb-4 ${subtextClass}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                                 </svg>
-                                <h3 className={`text-lg font-medium mb-2 ${textClass}`}>No data yet</h3>
-                                <p className={subtextClass}>Upload a CSV or click "+ New Trade" to get started</p>
+                                <h3 className={`text-base sm:text-lg font-medium mb-2 ${textClass}`}>No data yet</h3>
+                                <p className={`text-sm ${subtextClass}`}>Upload a CSV or click "+ New" to get started</p>
                             </div>
                         )}
                     </div>
