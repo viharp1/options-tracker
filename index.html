@@ -1066,17 +1066,17 @@
             const labelClass = darkMode ? 'text-gray-300' : 'text-gray-700';
 
             return (
-                <div className={`min-h-screen p-6 ${darkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
+                <div className={`min-h-screen p-3 sm:p-6 ${darkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
                     <div className="max-w-7xl mx-auto">
                         {/* Header */}
-                        <div className={`rounded-lg shadow-md p-6 mb-6 ${cardClass}`}>
-                            <div className="flex justify-between items-start mb-4">
+                        <div className={`rounded-lg shadow-md p-4 sm:p-6 mb-4 sm:mb-6 ${cardClass}`}>
+                            <div className="flex flex-col sm:flex-row justify-between items-start gap-3 mb-4">
                                 <div>
-                                    <h1 className={`text-3xl font-bold mb-2 ${textClass}`}>Options Income Tracker</h1>
-                                    <p className={subtextClass}>Track your covered calls and cash secured puts performance</p>
+                                    <h1 className={`text-xl sm:text-2xl md:text-3xl font-bold mb-1 ${textClass}`}>Options Income Tracker</h1>
+                                    <p className={`text-xs sm:text-sm ${subtextClass}`}>Track your covered calls and cash secured puts performance</p>
                                 </div>
-                                <div className="flex gap-2">
-                                    <label className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded cursor-pointer">
+                                <div className="flex gap-2 w-full sm:w-auto">
+                                    <label className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 text-sm rounded cursor-pointer flex-1 sm:flex-initial text-center">
                                         📁 Upload CSV
                                         <input type="file" accept=".csv" onChange={handleCSVImport} className="hidden" />
                                     </label>
@@ -1085,15 +1085,15 @@
                                             setShowForm(!showForm);
                                             if (showForm) setBulkMode(false);
                                         }}
-                                        className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
+                                        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 text-sm rounded flex-1 sm:flex-initial"
                                     >
-                                        {showForm ? 'Close Form' : '+ New Trade'}
+                                        {showForm ? 'Close' : '+ New'}
                                     </button>
                                     <button
                                         onClick={() => setDarkMode(!darkMode)}
-                                        className={`px-4 py-2 rounded ${darkMode ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                        className={`px-3 py-2 text-sm rounded ${darkMode ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                                     >
-                                        {darkMode ? '☀️ Light' : '🌙 Dark'}
+                                        {darkMode ? '☀️' : '🌙'}
                                     </button>
                                 </div>
                             </div>
@@ -1157,7 +1157,7 @@
                                                 expectedMonths: 1
                                             });
                                         }}
-                                        className={`px-3 py-1 text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                                     >
                                         Last Month
                                     </button>
@@ -1173,9 +1173,9 @@
                                                 expectedMonths: 3
                                             });
                                         }}
-                                        className={`px-3 py-1 text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                                     >
-                                        Last 3 Months
+                                        Last 3 Mo
                                     </button>
                                     <button
                                         onClick={() => {
@@ -1189,9 +1189,9 @@
                                                 expectedMonths: 12
                                             });
                                         }}
-                                        className={`px-3 py-1 text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                                     >
-                                        Last 12 Months
+                                        Last 12 Mo
                                     </button>
                                     <button
                                         onClick={() => {
@@ -1224,11 +1224,11 @@
                                 </div>
                                 
                                 {/* Income View Toggle */}
-                                <div className="flex gap-2 pt-3 mt-3 border-t border-gray-600">
-                                    <span className={`text-sm font-medium ${labelClass} self-center`}>Income View:</span>
+                                <div className="flex flex-wrap gap-2 pt-3 mt-3 border-t border-gray-600">
+                                    <span className={`text-xs sm:text-sm font-medium ${labelClass} self-center`}>Income View:</span>
                                     <button
                                         onClick={() => setIncomeView('options')}
-                                        className={`px-4 py-2 rounded text-sm font-medium ${
+                                        className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
                                             incomeView === 'options'
                                                 ? 'bg-blue-500 text-white'
                                                 : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -1238,7 +1238,7 @@
                                     </button>
                                     <button
                                         onClick={() => setIncomeView('dividends')}
-                                        className={`px-4 py-2 rounded text-sm font-medium ${
+                                        className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
                                             incomeView === 'dividends'
                                                 ? 'bg-green-500 text-white'
                                                 : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -1248,7 +1248,7 @@
                                     </button>
                                     <button
                                         onClick={() => setIncomeView('both')}
-                                        className={`px-4 py-2 rounded text-sm font-medium ${
+                                        className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
                                             incomeView === 'both'
                                                 ? 'bg-purple-500 text-white'
                                                 : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -1262,12 +1262,12 @@
 
                         {/* Summary Cards */}
                         {(analysis || dividendAnalysis) && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-                            <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
-                                <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-4 mb-4 sm:mb-6">
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                <h3 className={`text-xs sm:text-sm font-semibold mb-1 sm:mb-2 ${subtextClass}`}>
                                     {incomeView === 'options' ? 'Options Premium' : incomeView === 'dividends' ? 'Dividend Income' : 'Total Income'}
                                 </h3>
-                                <p className="text-3xl font-bold text-green-600">
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-green-600">
                                     ${(() => {
                                         if (incomeView === 'options') {
                                             return analysis?.totalPremium?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00';
@@ -1280,9 +1280,9 @@
                                     })()}
                                 </p>
                             </div>
-                            <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
                                 <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>Avg / Month</h3>
-                                <p className="text-3xl font-bold text-blue-600">
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-blue-600">
                                     ${(() => {
                                         let total = 0;
                                         if (incomeView === 'options' && analysis) total = analysis.totalPremium;
@@ -1300,11 +1300,11 @@
                                     })()}
                                 </p>
                             </div>
-                            <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
                                 <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>
                                     {incomeView === 'dividends' ? 'Est. Dividend Tax' : 'Est. Tax'}
                                 </h3>
-                                <p className="text-3xl font-bold text-red-600">
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-red-600">
                                     ${(() => {
                                         if (incomeView === 'options') {
                                             return analysis?.totalTax?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00';
@@ -1335,18 +1335,18 @@
                                     </p>
                                 )}
                             </div>
-                            <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
                                 <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>Positions</h3>
-                                <p className="text-3xl font-bold text-blue-600">{analysis?.totalPositions || 0}</p>
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-blue-600">{analysis?.totalPositions || 0}</p>
                                 <p className={`text-xs mt-1 ${subtextClass}`}>
                                     {analysis?.totalCCs || 0} CCs / {analysis?.totalCSPs || 0} CSPs • {analysis?.totalRolls || 0} rolls
                                 </p>
                             </div>
-                            <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
                                 <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>
                                     {incomeView === 'dividends' ? 'Dividends After Tax' : 'Net After Tax'}
                                 </h3>
-                                <p className="text-3xl font-bold text-purple-600">
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-purple-600">
                                     ${(() => {
                                         if (incomeView === 'options') {
                                             const optionsNet = (analysis?.totalPremium || 0) - (analysis?.totalTax || 0);
@@ -1751,12 +1751,12 @@
 
                                 {/* Charts */}
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                                    <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
+                                    <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
                                         <div style={{ height: '300px' }}>
                                             <canvas ref={chartRefIncome}></canvas>
                                         </div>
                                     </div>
-                                    <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
+                                    <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
                                         <div style={{ height: '300px' }}>
                                             <canvas ref={chartRefTicker}></canvas>
                                         </div>
@@ -1841,7 +1841,7 @@
 
                                 {/* All Trades - Options Only */}
                                 {incomeView !== 'dividends' && (
-                                <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
+                                <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
                                     <h2 className={`text-xl font-semibold mb-4 ${textClass}`}>All Trades</h2>
                                     <div className="overflow-x-auto">
                                         <table className="min-w-full divide-y divide-gray-200">
@@ -1930,7 +1930,7 @@
 
                                 {/* All Dividend Payments - Dividends Only */}
                                 {incomeView !== 'options' && dividends.length > 0 && (
-                                <div className={`rounded-lg shadow-md p-6 ${cardClass}`}>
+                                <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
                                     <h2 className={`text-xl font-semibold mb-4 ${textClass}`}>All Dividend Payments</h2>
                                     <div className="overflow-x-auto">
                                         <table className="min-w-full divide-y divide-gray-200">
