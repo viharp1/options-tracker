@@ -268,8 +268,29 @@
             const loadFromStorage = (key, defaultValue) => {
                 try {
                     const saved = localStorage.getItem(key);
-                    return saved ? JSON.parse(saved) : defaultValue;
+                    if (!saved) return defaultValue;
+                    
+                    const data = JSON.parse(saved);
+                    
+                    // Fix: Restore Date objects for trades
+                    if (key === 'optionsTrackerTrades' && Array.isArray(data)) {
+                        return data.map(trade => ({
+                            ...trade,
+                            dateObj: new Date(trade.date || trade.dateObj)
+                        }));
+                    }
+                    
+                    // Fix: Restore Date objects for dividends
+                    if (key === 'optionsTrackerDividends' && Array.isArray(data)) {
+                        return data.map(dividend => ({
+                            ...dividend,
+                            dateObj: new Date(dividend.date || dividend.dateObj)
+                        }));
+                    }
+                    
+                    return data;
                 } catch (e) {
+                    console.error('Error loading from storage:', e);
                     return defaultValue;
                 }
             };
