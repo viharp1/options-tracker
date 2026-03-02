@@ -1,0 +1,2015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Options Tracker">
+    <meta name="theme-color" content="#3b82f6">
+    <title>Options Income Tracker</title>
+    <link rel="manifest" href="./manifest.json">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Parse Robinhood CSV format
+        const parseRobinhoodCSV = (csvText) => {
+            const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+            const trades = [];
+            const dividends = [];
+
+            parsed.data.forEach(row => {
+                const transCode = row['Trans Code'];
+                const description = row['Description'] || '';
+                const instrument = row['Instrument'];
+                const activityDate = row['Activity Date'];
+                
+                // Process dividend transactions (CDIV)
+                if (transCode === 'CDIV') {
+                    const amount = parseFloat(row['Amount']?.replace('$', '').replace(',', '')) || 0;
+                    
+                    if (instrument && activityDate && amount > 0) {
+                        dividends.push({
+                            date: activityDate,
+                            dateObj: new Date(activityDate),
+                            symbol: instrument,
+                            amount: amount,
+                            description: description
+                        });
+                    }
+                }
+                
+                // Process options trades (STO = Sell to Open, BTC = Buy to Close)
+                if (transCode === 'STO' || transCode === 'BTC') {
+                    const quantity = parseInt(row['Quantity']) || 0;
+                    const amount = parseFloat(row['Amount']?.replace('$', '').replace(',', '').replace('(', '-').replace(')', '')) || 0;
+                    
+                    // Parse option details from description (e.g., "TECL 2/20/2026 Call $150.00")
+                    const optionMatch = description.match(/(\w+)\s+([\d\/]+)\s+(Call|Put)\s+\$?([\d.]+)/i);
+                    
+                    if (optionMatch && activityDate) {
+                        const [, ticker, expiration, optionType, strike] = optionMatch;
+                        
+                        // Determine strategy based on option type
+                        const strategy = optionType.toLowerCase() === 'call' ? 'Covered Call' : 'Cash Secured Put';
+                        
+                        trades.push({
+                            date: activityDate,
+                            dateObj: new Date(activityDate),
+                            symbol: ticker,
+                            strategy: strategy,
+                            quantity: Math.abs(quantity),
+                            amount: amount,
+                            strikePrice: strike,
+                            expiration: expiration,
+                            transCode: transCode
+                        });
+                    }
+                }
+            });
+
+            return { trades, dividends };
+        };
+
+        // Tax calculation helper
+        const calculateTax = (gain, holdingPeriodDays, taxRate = { shortTerm: 0.24, longTerm: 0.15 }) => {
+            const isLongTerm = holdingPeriodDays > 365;
+            const rate = isLongTerm ? taxRate.longTerm : taxRate.shortTerm;
+            return {
+                tax: gain * rate,
+                rate: rate,
+                isLongTerm: isLongTerm
+            };
+        };
+
+        // Group trades for analysis
+        const analyzeTrades = (trades) => {
+            const byTicker = {};
+            const byMonth = {};
+            let totalPremium = 0;
+            let totalTaxShortTerm = 0;
+            let totalTaxLongTerm = 0;
+            let wins = 0;
+            let losses = 0;
+            let totalPositions = 0; // Count of STO (sell to open)
+            let totalRolls = 0; // Count of rolls
+            let totalCCs = 0;
+            let totalCSPs = 0;
+
+            trades.forEach(trade => {
+                const ticker = trade.symbol || 'UNKNOWN';
+                const month = trade.dateObj.toISOString().slice(0, 7);
+                const premium = trade.amount; // Keep actual value (positive or negative)
+
+                // Count positions and rolls
+                if (trade.description && trade.description.includes('ROLL')) {
+                    totalRolls++;
+                } else if (trade.amount > 0) {
+                    // Positive amount = STO (new position opened)
+                    totalPositions++;
+                }
+
+                // Count strategy types
+                if (trade.strategy === 'Covered Call') {
+                    totalCCs++;
+                } else if (trade.strategy === 'Cash Secured Put') {
+                    totalCSPs++;
+                }
+
+                // By ticker
+                if (!byTicker[ticker]) {
+                    byTicker[ticker] = {
+                        ticker,
+                        trades: [],
+                        totalPremium: 0,
+                        wins: 0,
+                        losses: 0,
+                        coveredCalls: 0,
+                        cashSecuredPuts: 0
+                    };
+                }
+                byTicker[ticker].trades.push(trade);
+                byTicker[ticker].totalPremium += premium; // Net premium (includes negative amounts)
+                
+                if (trade.strategy === 'Covered Call') {
+                    byTicker[ticker].coveredCalls++;
+                } else if (trade.strategy === 'Cash Secured Put') {
+                    byTicker[ticker].cashSecuredPuts++;
+                }
+
+                // Win/loss - positive amount = premium received (win), negative = buyback (loss)
+                if (trade.amount > 0) {
+                    byTicker[ticker].wins++;
+                    wins++;
+                } else if (trade.amount < 0) {
+                    byTicker[ticker].losses++;
+                    losses++;
+                }
+
+                // By month
+                if (!byMonth[month]) {
+                    byMonth[month] = { month, premium: 0, trades: 0 };
+                }
+                byMonth[month].premium += premium; // Net premium for the month
+                byMonth[month].trades++;
+
+                totalPremium += premium; // Net total premium (includes buybacks as negatives)
+
+                // Tax estimation (only on positive premiums collected)
+                if (premium > 0) {
+                    const holdingDays = 30; // Conservative estimate for options
+                    const taxCalc = calculateTax(premium, holdingDays);
+                    if (taxCalc.isLongTerm) {
+                        totalTaxLongTerm += taxCalc.tax;
+                    } else {
+                        totalTaxShortTerm += taxCalc.tax;
+                    }
+                }
+            });
+
+            return {
+                byTicker: Object.values(byTicker),
+                byMonth: Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month)),
+                totalPremium,
+                totalTaxShortTerm,
+                totalTaxLongTerm,
+                totalTax: totalTaxShortTerm + totalTaxLongTerm,
+                wins,
+                losses,
+                winRate: wins + losses > 0 ? (wins / (wins + losses) * 100).toFixed(1) : 0,
+                totalPositions,
+                totalRolls,
+                totalCCs,
+                totalCSPs
+            };
+        };
+
+        // Calculate months between two dates as a precise decimal
+        const getMonthsCount = (dateRange, analysis, dividendAnalysis, incomeView) => {
+            // Always calculate from actual dates if they're set - most accurate
+            if (dateRange.start && dateRange.end) {
+                const start = new Date(dateRange.start);
+                const end = new Date(dateRange.end);
+                const wholeMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+                const daysInEndMonth = new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
+                const dayFraction = (end.getDate() - start.getDate()) / daysInEndMonth;
+                return Math.max(0.1, wholeMonths + dayFraction);
+            }
+            if (dateRange.start) {
+                const start = new Date(dateRange.start);
+                const end = new Date();
+                const wholeMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+                const daysInEndMonth = new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
+                const dayFraction = (end.getDate() - start.getDate()) / daysInEndMonth;
+                return Math.max(0.1, wholeMonths + dayFraction);
+            }
+            if (incomeView === 'dividends' && dividendAnalysis) return dividendAnalysis.byMonth.length || 1;
+            if (incomeView === 'both' && (analysis || dividendAnalysis)) {
+                const allMonths = new Set([
+                    ...(analysis?.byMonth.map(m => m.month) || []),
+                    ...(dividendAnalysis?.byMonth.map(m => m.month) || [])
+                ]);
+                return allMonths.size || 1;
+            }
+            return analysis?.byMonth.length || 1;
+        };
+
+        // Analyze dividends
+        const analyzeDividends = (dividends) => {
+            const byTicker = {};
+            const byMonth = {};
+            let totalDividends = 0;
+
+            dividends.forEach(dividend => {
+                const ticker = dividend.symbol || 'UNKNOWN';
+                const month = dividend.dateObj.toISOString().slice(0, 7);
+
+                if (!byTicker[ticker]) {
+                    byTicker[ticker] = {
+                        ticker,
+                        totalDividends: 0,
+                        paymentCount: 0,
+                        payments: []
+                    };
+                }
+                byTicker[ticker].totalDividends += dividend.amount;
+                byTicker[ticker].paymentCount++;
+                byTicker[ticker].payments.push(dividend);
+
+                if (!byMonth[month]) {
+                    byMonth[month] = { month, amount: 0, count: 0 };
+                }
+                byMonth[month].amount += dividend.amount;
+                byMonth[month].count++;
+
+                totalDividends += dividend.amount;
+            });
+
+            return {
+                byTicker: Object.values(byTicker),
+                byMonth: Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month)),
+                totalDividends
+            };
+        };
+
+        function OptionsTracker() {
+            // Load from localStorage on init
+            const loadFromStorage = (key, defaultValue) => {
+                try {
+                    const saved = localStorage.getItem(key);
+                    return saved ? JSON.parse(saved) : defaultValue;
+                } catch (e) {
+                    return defaultValue;
+                }
+            };
+
+            const [trades, setTrades] = useState(() => loadFromStorage('optionsTrackerTrades', []));
+            const [dividends, setDividends] = useState(() => loadFromStorage('optionsTrackerDividends', []));
+            const [analysis, setAnalysis] = useState(null);
+            const [dividendAnalysis, setDividendAnalysis] = useState(null);
+            const [taxRates, setTaxRates] = useState(() => loadFromStorage('optionsTrackerTaxRates', { shortTerm: 24, longTerm: 15 }));
+            const [showForm, setShowForm] = useState(false);
+            const [bulkMode, setBulkMode] = useState(false);
+            const [editingIndex, setEditingIndex] = useState(null);
+            const [importStatus, setImportStatus] = useState(null);
+            const [darkMode, setDarkMode] = useState(true);
+            const [dateRange, setDateRange] = useState({ start: '', end: '' });
+            const [incomeView, setIncomeView] = useState('options'); // 'options', 'dividends', 'both'
+            const [stockPrices, setStockPrices] = useState({});
+            const [loadingPrices, setLoadingPrices] = useState(false);
+            
+            // Save to localStorage whenever data changes
+            useEffect(() => {
+                try {
+                    localStorage.setItem('optionsTrackerTrades', JSON.stringify(trades));
+                } catch (e) {
+                    console.error('Failed to save trades:', e);
+                }
+            }, [trades]);
+
+            useEffect(() => {
+                try {
+                    localStorage.setItem('optionsTrackerDividends', JSON.stringify(dividends));
+                } catch (e) {
+                    console.error('Failed to save dividends:', e);
+                }
+            }, [dividends]);
+
+            useEffect(() => {
+                try {
+                    localStorage.setItem('optionsTrackerTaxRates', JSON.stringify(taxRates));
+                } catch (e) {
+                    console.error('Failed to save tax rates:', e);
+                }
+            }, [taxRates]);
+            
+            // Manual price entry
+            const updateManualPrice = (ticker, price) => {
+                const numPrice = parseFloat(price);
+                if (numPrice && numPrice > 0) {
+                    setStockPrices(prev => ({
+                        ...prev,
+                        [ticker]: {
+                            price: numPrice,
+                            updated: new Date().toLocaleTimeString(),
+                            manual: true
+                        }
+                    }));
+                } else if (price === '') {
+                    // Clear price if input is empty
+                    setStockPrices(prev => {
+                        const newPrices = { ...prev };
+                        delete newPrices[ticker];
+                        return newPrices;
+                    });
+                }
+            };
+            const [formData, setFormData] = useState({
+                date: new Date().toISOString().split('T')[0],
+                symbol: '',
+                strategy: 'Covered Call',
+                contracts: 1,
+                premium: '',
+                strikePrice: '',
+                expiration: '',
+                outcome: 'win'
+            });
+            
+            const chartRefIncome = useRef(null);
+            const chartRefTicker = useRef(null);
+            const chartInstanceIncome = useRef(null);
+            const chartInstanceTicker = useRef(null);
+
+            const handleCSVImport = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const csvText = e.target.result;
+                    const { trades: importedTrades, dividends: importedDividends } = parseRobinhoodCSV(csvText);
+                    
+                    // Check for duplicate trades
+                    const existingTradesSet = new Set(
+                        trades.map(t => `${t.date}|${t.symbol}|${t.strategy}|${t.quantity}|${t.amount}|${t.strikePrice}|${t.expiration}`)
+                    );
+                    
+                    const newTrades = importedTrades.filter(trade => {
+                        const tradeKey = `${trade.date}|${trade.symbol}|${trade.strategy}|${trade.quantity}|${trade.amount}|${trade.strikePrice}|${trade.expiration}`;
+                        return !existingTradesSet.has(tradeKey);
+                    });
+                    
+                    // Check for duplicate dividends
+                    const existingDividendsSet = new Set(
+                        dividends.map(d => `${d.date}|${d.symbol}|${d.amount}`)
+                    );
+                    
+                    const newDividends = importedDividends.filter(dividend => {
+                        const dividendKey = `${dividend.date}|${dividend.symbol}|${dividend.amount}`;
+                        return !existingDividendsSet.has(dividendKey);
+                    });
+                    
+                    const tradesSkipped = importedTrades.length - newTrades.length;
+                    const dividendsSkipped = importedDividends.length - newDividends.length;
+                    
+                    if (newTrades.length > 0) {
+                        setTrades(prev => [...prev, ...newTrades]);
+                    }
+                    
+                    if (newDividends.length > 0) {
+                        setDividends(prev => [...prev, ...newDividends]);
+                    }
+                    
+                    // Build status message
+                    let messages = [];
+                    if (newTrades.length > 0) {
+                        messages.push(`${newTrades.length} options trades`);
+                    }
+                    if (newDividends.length > 0) {
+                        messages.push(`${newDividends.length} dividend payments`);
+                    }
+                    if (tradesSkipped > 0 || dividendsSkipped > 0) {
+                        messages.push(`${tradesSkipped + dividendsSkipped} duplicates skipped`);
+                    }
+                    
+                    if (messages.length > 0) {
+                        setImportStatus({
+                            type: 'success',
+                            message: `Imported: ${messages.join(', ')}`
+                        });
+                    } else {
+                        setImportStatus({
+                            type: 'warning',
+                            message: 'All entries were duplicates - nothing imported'
+                        });
+                    }
+                    
+                    setTimeout(() => setImportStatus(null), 5000);
+                    event.target.value = '';
+                };
+                reader.readAsText(file);
+            };
+
+            const handleFormChange = (field, value) => {
+                setFormData(prev => ({ ...prev, [field]: value }));
+            };
+
+            const handleAddTrade = (e) => {
+                e.preventDefault();
+                
+                const tradeData = {
+                    date: formData.date,
+                    dateObj: new Date(formData.date),
+                    symbol: formData.symbol.toUpperCase(),
+                    strategy: formData.strategy,
+                    quantity: parseInt(formData.contracts),
+                    amount: parseFloat(formData.premium) * (formData.outcome === 'win' ? 1 : -1),
+                    strikePrice: formData.strikePrice,
+                    expiration: formData.expiration
+                };
+
+                if (editingIndex !== null) {
+                    setTrades(prev => prev.map((trade, idx) => 
+                        idx === editingIndex ? tradeData : trade
+                    ));
+                    setEditingIndex(null);
+                    setShowForm(false);
+                    setFormData({
+                        date: new Date().toISOString().split('T')[0],
+                        symbol: '',
+                        strategy: 'Covered Call',
+                        contracts: 1,
+                        premium: '',
+                        strikePrice: '',
+                        expiration: '',
+                        outcome: 'win'
+                    });
+                } else {
+                    setTrades(prev => [...prev, tradeData]);
+                    
+                    if (bulkMode) {
+                        setFormData(prev => ({
+                            ...prev,
+                            premium: '',
+                            strikePrice: '',
+                            expiration: ''
+                        }));
+                    } else {
+                        setFormData({
+                            date: new Date().toISOString().split('T')[0],
+                            symbol: '',
+                            strategy: 'Covered Call',
+                            contracts: 1,
+                            premium: '',
+                            strikePrice: '',
+                            expiration: '',
+                            outcome: 'win'
+                        });
+                        setShowForm(false);
+                    }
+                }
+            };
+
+            const deleteTrade = (index) => {
+                setTrades(prev => prev.filter((_, i) => i !== index));
+            };
+
+            const editTrade = (index) => {
+                const trade = trades[index];
+                setFormData({
+                    date: trade.date,
+                    symbol: trade.symbol,
+                    strategy: trade.strategy,
+                    contracts: trade.quantity,
+                    premium: Math.abs(trade.amount).toString(),
+                    strikePrice: trade.strikePrice || '',
+                    expiration: trade.expiration || '',
+                    outcome: trade.amount > 0 ? 'win' : 'loss'
+                });
+                setEditingIndex(index);
+                setShowForm(true);
+                setBulkMode(false);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            const rollTrade = (index) => {
+                const trade = trades[index];
+                setFormData({
+                    date: new Date().toISOString().split('T')[0],
+                    symbol: trade.symbol,
+                    strategy: trade.strategy,
+                    contracts: trade.quantity,
+                    premium: '',
+                    strikePrice: trade.strikePrice || '',
+                    expiration: '',
+                    outcome: 'win'
+                });
+                setShowForm(true);
+                setBulkMode(false);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            const cancelEdit = () => {
+                setEditingIndex(null);
+                setFormData({
+                    date: new Date().toISOString().split('T')[0],
+                    symbol: '',
+                    strategy: 'Covered Call',
+                    contracts: 1,
+                    premium: '',
+                    strikePrice: '',
+                    expiration: '',
+                    outcome: 'win'
+                });
+            };
+
+            const clearData = () => {
+                setTrades([]);
+                setAnalysis(null);
+            };
+
+            // Get active positions (trades that haven't expired yet)
+            const getActivePositions = () => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                
+                const activeTrades = trades.filter(trade => {
+                    if (!trade.expiration) return false;
+                    const expDate = new Date(trade.expiration);
+                    return expDate >= today;
+                });
+
+                // Consolidate positions with same ticker, strike, expiration, and strategy
+                // Also net out STO (sell to open) vs BTC (buy to close) transactions
+                const positionMap = {};
+                
+                activeTrades.forEach(trade => {
+                    const key = `${trade.symbol}|${trade.strikePrice}|${trade.expiration}|${trade.strategy}`;
+                    
+                    if (!positionMap[key]) {
+                        positionMap[key] = {
+                            ...trade,
+                            quantity: 0,
+                            amount: 0
+                        };
+                    }
+                    
+                    // STO (Sell to Open) = opening position (positive quantity)
+                    // BTC (Buy to Close) = closing position (negative quantity to net out)
+                    if (trade.transCode === 'STO') {
+                        positionMap[key].quantity += trade.quantity;
+                        positionMap[key].amount += trade.amount;
+                    } else if (trade.transCode === 'BTC') {
+                        positionMap[key].quantity -= trade.quantity;
+                        positionMap[key].amount += trade.amount; // BTC amount is already negative in CSV
+                    }
+                });
+                
+                // Only return positions with non-zero quantity (not fully closed)
+                return Object.values(positionMap).filter(pos => pos.quantity > 0);
+            };
+
+            // Fetch live stock prices
+            const fetchStockPrices = async () => {
+                const activePositions = getActivePositions();
+                const uniqueTickers = [...new Set(activePositions.map(t => t.symbol))];
+                
+                if (uniqueTickers.length === 0) return;
+                
+                setLoadingPrices(true);
+                const prices = {};
+                
+                // Try multiple APIs for better reliability
+                for (const ticker of uniqueTickers) {
+                    try {
+                        // Method 1: Try Yahoo Finance first (most reliable)
+                        const yahooResponse = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`);
+                        const yahooData = await yahooResponse.json();
+                        
+                        if (yahooData?.chart?.result?.[0]?.meta?.regularMarketPrice) {
+                            prices[ticker] = {
+                                price: yahooData.chart.result[0].meta.regularMarketPrice,
+                                previousClose: yahooData.chart.result[0].meta.previousClose,
+                                updated: new Date().toLocaleTimeString()
+                            };
+                        } else {
+                            // Fallback: Try finnhub
+                            const finnhubResponse = await fetch(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=demo`);
+                            const finnhubData = await finnhubResponse.json();
+                            
+                            if (finnhubData && finnhubData.c && finnhubData.c > 0) {
+                                prices[ticker] = {
+                                    price: finnhubData.c,
+                                    previousClose: finnhubData.pc,
+                                    updated: new Date().toLocaleTimeString()
+                                };
+                            } else {
+                                // If both fail, show helpful message
+                                const now = new Date();
+                                const hour = now.getHours();
+                                const day = now.getDay();
+                                
+                                // Market hours: 9:30 AM - 4:00 PM ET on weekdays
+                                const isWeekend = day === 0 || day === 6;
+                                const isMarketClosed = hour < 9 || hour >= 16 || isWeekend;
+                                
+                                prices[ticker] = {
+                                    price: null,
+                                    error: isMarketClosed 
+                                        ? 'Market closed - prices update 9:30 AM-4 PM ET weekdays' 
+                                        : 'Unable to fetch (free API rate limit)',
+                                    updated: new Date().toLocaleTimeString()
+                                };
+                            }
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching price for ${ticker}:`, error);
+                        prices[ticker] = {
+                            price: null,
+                            error: 'Network error - click refresh to retry',
+                            updated: new Date().toLocaleTimeString()
+                        };
+                    }
+                    
+                    // Small delay to avoid rate limiting
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+                
+                setStockPrices(prices);
+                setLoadingPrices(false);
+            };
+
+            // Auto-refresh prices every 5 minutes (to avoid rate limits)
+            useEffect(() => {
+                if (trades.length > 0) {
+                    fetchStockPrices();
+                    const interval = setInterval(fetchStockPrices, 300000); // Refresh every 5 minutes
+                    return () => clearInterval(interval);
+                }
+            }, [trades]);
+
+            useEffect(() => {
+                if (trades.length > 0 || dividends.length > 0) {
+                    let filteredTrades = trades;
+                    let filteredDividends = dividends;
+                    
+                    if (dateRange.start) {
+                        const startDate = new Date(dateRange.start);
+                        filteredTrades = filteredTrades.filter(t => t.dateObj >= startDate);
+                        filteredDividends = filteredDividends.filter(d => d.dateObj >= startDate);
+                    }
+                    
+                    if (dateRange.end) {
+                        const endDate = new Date(dateRange.end);
+                        endDate.setHours(23, 59, 59, 999);
+                        filteredTrades = filteredTrades.filter(t => t.dateObj <= endDate);
+                        filteredDividends = filteredDividends.filter(d => d.dateObj <= endDate);
+                    }
+                    
+                    const analyzed = analyzeTrades(filteredTrades);
+                    setAnalysis(analyzed);
+                    
+                    const dividendAnalyzed = analyzeDividends(filteredDividends);
+                    setDividendAnalysis(dividendAnalyzed);
+                }
+            }, [trades, dividends, dateRange, taxRates]);
+
+            // Income by Month Chart
+            useEffect(() => {
+                if (!chartRefIncome.current) return;
+                
+                if (chartInstanceIncome.current) {
+                    chartInstanceIncome.current.destroy();
+                }
+
+                const ctx = chartRefIncome.current.getContext('2d');
+                
+                if (incomeView === 'options' && analysis) {
+                    // Options view - show options premium
+                    chartInstanceIncome.current = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: analysis.byMonth.map(m => m.month),
+                            datasets: [{
+                                label: 'Premium Income',
+                                data: analysis.byMonth.map(m => m.premium),
+                                backgroundColor: 'rgba(59, 130, 246, 0.5)',
+                                borderColor: 'rgb(59, 130, 246)',
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                title: { 
+                                    display: true, 
+                                    text: 'Options Premium Income by Month',
+                                    color: darkMode ? '#fff' : '#000'
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: {
+                                        callback: (value) => '$' + value.toLocaleString(),
+                                        color: darkMode ? '#9ca3af' : '#6b7280'
+                                    },
+                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                },
+                                x: {
+                                    ticks: { color: darkMode ? '#9ca3af' : '#6b7280' },
+                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                }
+                            }
+                        }
+                    });
+                } else if (incomeView === 'dividends' && dividendAnalysis) {
+                    // Dividends view - show dividend income
+                    chartInstanceIncome.current = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: dividendAnalysis.byMonth.map(m => m.month),
+                            datasets: [{
+                                label: 'Dividend Income',
+                                data: dividendAnalysis.byMonth.map(m => m.amount),
+                                backgroundColor: 'rgba(16, 185, 129, 0.5)',
+                                borderColor: 'rgb(16, 185, 129)',
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                title: { 
+                                    display: true, 
+                                    text: 'Dividend Income by Month',
+                                    color: darkMode ? '#fff' : '#000'
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: {
+                                        callback: (value) => '$' + value.toLocaleString(),
+                                        color: darkMode ? '#9ca3af' : '#6b7280'
+                                    },
+                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                },
+                                x: {
+                                    ticks: { color: darkMode ? '#9ca3af' : '#6b7280' },
+                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                }
+                            }
+                        }
+                    });
+                } else if (incomeView === 'both' && (analysis || dividendAnalysis)) {
+                    // Both view - stacked bars
+                    const allMonths = new Set([
+                        ...(analysis?.byMonth.map(m => m.month) || []),
+                        ...(dividendAnalysis?.byMonth.map(m => m.month) || [])
+                    ]);
+                    const months = Array.from(allMonths).sort();
+                    
+                    const optionsData = months.map(month => {
+                        const found = analysis?.byMonth.find(m => m.month === month);
+                        return found ? found.premium : 0;
+                    });
+                    
+                    const dividendsData = months.map(month => {
+                        const found = dividendAnalysis?.byMonth.find(m => m.month === month);
+                        return found ? found.amount : 0;
+                    });
+                    
+                    chartInstanceIncome.current = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: months,
+                            datasets: [
+                                {
+                                    label: 'Options Premium',
+                                    data: optionsData,
+                                    backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                                    borderColor: 'rgb(59, 130, 246)',
+                                    borderWidth: 1
+                                },
+                                {
+                                    label: 'Dividends',
+                                    data: dividendsData,
+                                    backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                                    borderColor: 'rgb(16, 185, 129)',
+                                    borderWidth: 1
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { 
+                                    display: true,
+                                    labels: { color: darkMode ? '#fff' : '#000' }
+                                },
+                                title: { 
+                                    display: true, 
+                                    text: 'Combined Income by Month',
+                                    color: darkMode ? '#fff' : '#000'
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    stacked: true,
+                                    beginAtZero: true,
+                                    ticks: {
+                                        callback: (value) => '$' + value.toLocaleString(),
+                                        color: darkMode ? '#9ca3af' : '#6b7280'
+                                    },
+                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                },
+                                x: {
+                                    stacked: true,
+                                    ticks: { color: darkMode ? '#9ca3af' : '#6b7280' },
+                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                }
+                            }
+                        }
+                    });
+                }
+            }, [analysis, dividendAnalysis, darkMode, incomeView]);
+
+            // Secondary Chart (Pie charts)
+            useEffect(() => {
+                if (!chartRefTicker.current) return;
+                
+                if (chartInstanceTicker.current) {
+                    chartInstanceTicker.current.destroy();
+                }
+
+                const ctx = chartRefTicker.current.getContext('2d');
+                
+                if (incomeView === 'options' && analysis) {
+                    // Options view - CC vs CSP pie
+                    let filteredTrades = trades;
+                    if (dateRange.start) {
+                        const startDate = new Date(dateRange.start);
+                        filteredTrades = filteredTrades.filter(t => t.dateObj >= startDate);
+                    }
+                    if (dateRange.end) {
+                        const endDate = new Date(dateRange.end);
+                        endDate.setHours(23, 59, 59, 999);
+                        filteredTrades = filteredTrades.filter(t => t.dateObj <= endDate);
+                    }
+
+                    let ccNetPremium = 0;
+                    let cspNetPremium = 0;
+
+                    filteredTrades.forEach(trade => {
+                        if (trade.strategy === 'Covered Call') {
+                            ccNetPremium += trade.amount;
+                        } else if (trade.strategy === 'Cash Secured Put') {
+                            cspNetPremium += trade.amount;
+                        }
+                    });
+
+                    chartInstanceTicker.current = new Chart(ctx, {
+                        type: 'pie',
+                        data: {
+                            labels: ['Covered Calls', 'Cash Secured Puts'],
+                            datasets: [{
+                                label: 'Net Premium',
+                                data: [ccNetPremium, cspNetPremium],
+                                backgroundColor: [
+                                    'rgba(59, 130, 246, 0.8)',
+                                    'rgba(16, 185, 129, 0.8)'
+                                ],
+                                borderColor: [
+                                    'rgb(59, 130, 246)',
+                                    'rgb(16, 185, 129)'
+                                ],
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { 
+                                    display: true,
+                                    position: 'bottom',
+                                    labels: {
+                                        color: darkMode ? '#fff' : '#000',
+                                        padding: 15,
+                                        font: { size: 12 }
+                                    }
+                                },
+                                title: { 
+                                    display: true, 
+                                    text: 'Net Premium: Covered Calls vs Cash Secured Puts',
+                                    color: darkMode ? '#fff' : '#000',
+                                    font: { size: 14 }
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            const label = context.label || '';
+                                            const value = context.parsed;
+                                            const total = ccNetPremium + cspNetPremium;
+                                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                            return `${label}: $${value.toFixed(2)} (${percentage}%)`;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                } else if (incomeView === 'dividends' && dividendAnalysis) {
+                    // Dividends view - Top 5 dividend payers pie
+                    const topPayers = dividendAnalysis.byTicker
+                        .sort((a, b) => b.totalDividends - a.totalDividends)
+                        .slice(0, 5);
+                    
+                    chartInstanceTicker.current = new Chart(ctx, {
+                        type: 'pie',
+                        data: {
+                            labels: topPayers.map(t => t.ticker),
+                            datasets: [{
+                                label: 'Dividends',
+                                data: topPayers.map(t => t.totalDividends),
+                                backgroundColor: [
+                                    'rgba(239, 68, 68, 0.8)',
+                                    'rgba(251, 146, 60, 0.8)',
+                                    'rgba(34, 197, 94, 0.8)',
+                                    'rgba(59, 130, 246, 0.8)',
+                                    'rgba(168, 85, 247, 0.8)'
+                                ],
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { 
+                                    display: true,
+                                    position: 'bottom',
+                                    labels: {
+                                        color: darkMode ? '#fff' : '#000',
+                                        padding: 15,
+                                        font: { size: 12 }
+                                    }
+                                },
+                                title: { 
+                                    display: true, 
+                                    text: 'Top 5 Dividend Payers',
+                                    color: darkMode ? '#fff' : '#000',
+                                    font: { size: 14 }
+                                }
+                            }
+                        }
+                    });
+                } else if (incomeView === 'both' && (analysis || dividendAnalysis)) {
+                    // Both view - CC, CSP, Dividends combined pie
+                    let filteredTrades = trades;
+                    let filteredDividends = dividends;
+                    
+                    if (dateRange.start) {
+                        const startDate = new Date(dateRange.start);
+                        filteredTrades = filteredTrades.filter(t => t.dateObj >= startDate);
+                        filteredDividends = filteredDividends.filter(d => d.dateObj >= startDate);
+                    }
+                    if (dateRange.end) {
+                        const endDate = new Date(dateRange.end);
+                        endDate.setHours(23, 59, 59, 999);
+                        filteredTrades = filteredTrades.filter(t => t.dateObj <= endDate);
+                        filteredDividends = filteredDividends.filter(d => d.dateObj <= endDate);
+                    }
+
+                    let ccNetPremium = 0;
+                    let cspNetPremium = 0;
+
+                    filteredTrades.forEach(trade => {
+                        if (trade.strategy === 'Covered Call') ccNetPremium += trade.amount;
+                        else if (trade.strategy === 'Cash Secured Put') cspNetPremium += trade.amount;
+                    });
+                    
+                    const totalDividends = filteredDividends.reduce((sum, d) => sum + d.amount, 0);
+
+                    chartInstanceTicker.current = new Chart(ctx, {
+                        type: 'pie',
+                        data: {
+                            labels: ['Covered Calls', 'Cash Secured Puts', 'Dividends'],
+                            datasets: [{
+                                label: 'Income',
+                                data: [ccNetPremium, cspNetPremium, totalDividends],
+                                backgroundColor: [
+                                    'rgba(59, 130, 246, 0.8)',
+                                    'rgba(16, 185, 129, 0.8)',
+                                    'rgba(251, 146, 60, 0.8)'
+                                ],
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { 
+                                    display: true,
+                                    position: 'bottom',
+                                    labels: {
+                                        color: darkMode ? '#fff' : '#000',
+                                        padding: 15,
+                                        font: { size: 12 }
+                                    }
+                                },
+                                title: { 
+                                    display: true, 
+                                    text: 'Income Breakdown: Options vs Dividends',
+                                    color: darkMode ? '#fff' : '#000',
+                                    font: { size: 14 }
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            const label = context.label || '';
+                                            const value = context.parsed;
+                                            const total = ccNetPremium + cspNetPremium + totalDividends;
+                                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                            return `${label}: $${value.toFixed(2)} (${percentage}%)`;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            }, [analysis, dividendAnalysis, darkMode, incomeView, dateRange, trades, dividends]);
+
+            const cardClass = darkMode ? 'bg-gray-800' : 'bg-white';
+            const textClass = darkMode ? 'text-white' : 'text-gray-800';
+            const subtextClass = darkMode ? 'text-gray-300' : 'text-gray-600';
+            const inputClass = darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300';
+            const labelClass = darkMode ? 'text-gray-300' : 'text-gray-700';
+
+            return (
+                <div className={`min-h-screen p-3 sm:p-6 ${darkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
+                    <div className="max-w-7xl mx-auto">
+                        {/* Header */}
+                        <div className={`rounded-lg shadow-md p-4 sm:p-6 mb-4 sm:mb-6 ${cardClass}`}>
+                            <div className="flex flex-col sm:flex-row justify-between items-start gap-3 mb-4">
+                                <div>
+                                    <h1 className={`text-xl sm:text-2xl md:text-3xl font-bold mb-1 ${textClass}`}>Options Income Tracker</h1>
+                                    <p className={`text-xs sm:text-sm ${subtextClass}`}>Track your covered calls and cash secured puts performance</p>
+                                </div>
+                                <div className="flex gap-2 w-full sm:w-auto">
+                                    <label className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 text-sm rounded cursor-pointer flex-1 sm:flex-initial text-center">
+                                        📁 Upload CSV
+                                        <input type="file" accept=".csv" onChange={handleCSVImport} className="hidden" />
+                                    </label>
+                                    <button
+                                        onClick={() => {
+                                            setShowForm(!showForm);
+                                            if (showForm) setBulkMode(false);
+                                        }}
+                                        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 text-sm rounded flex-1 sm:flex-initial"
+                                    >
+                                        {showForm ? 'Close' : '+ New'}
+                                    </button>
+                                    <button
+                                        onClick={() => setDarkMode(!darkMode)}
+                                        className={`px-3 py-2 text-sm rounded ${darkMode ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                    >
+                                        {darkMode ? '☀️' : '🌙'}
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            {importStatus && (
+                                <div className={`mb-4 flex items-center gap-2 px-4 py-2 rounded ${
+                                    importStatus.type === 'success' 
+                                        ? 'bg-green-50 text-green-800 border border-green-200' 
+                                        : 'bg-yellow-50 text-yellow-800 border border-yellow-200'
+                                }`}>
+                                    {importStatus.type === 'success' ? '✓' : '⚠'}
+                                    <span className="text-sm">{importStatus.message}</span>
+                                </div>
+                            )}
+                            
+                            {/* Date Range Filter */}
+                            <div className="flex flex-col gap-3">
+                                <div className="flex flex-col sm:flex-row gap-4 items-end">
+                                    <div className="flex-1">
+                                        <label className={`block text-sm font-medium mb-1 ${labelClass}`}>
+                                            Start Date
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={dateRange.start}
+                                            onChange={(e) => setDateRange(prev => ({ start: e.target.value, end: prev.end }))}
+                                            className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                        />
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className={`block text-sm font-medium mb-1 ${labelClass}`}>
+                                            End Date
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={dateRange.end}
+                                            onChange={(e) => setDateRange(prev => ({ start: prev.start, end: e.target.value }))}
+                                            className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                        />
+                                    </div>
+                                    {(dateRange.start || dateRange.end) && (
+                                        <button
+                                            onClick={() => setDateRange({ start: '', end: '' })}
+                                            className={`px-4 py-2 rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                        >
+                                            Clear Filter
+                                        </button>
+                                    )}
+                                </div>
+                                
+                                {/* Quick Date Range Buttons */}
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        onClick={() => {
+                                            const today = new Date();
+                                            const lastMonth = new Date(today);
+                                            lastMonth.setMonth(lastMonth.getMonth() - 1);
+                                            setDateRange({
+                                                start: lastMonth.toISOString().split('T')[0],
+                                                end: today.toISOString().split('T')[0],
+                                                expectedMonths: 1
+                                            });
+                                        }}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                    >
+                                        Last Month
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const today = new Date();
+                                            // Go back to the 1st of the month, 2 months ago (not 3)
+                                            // This gives us: current month + 2 previous months = 3 months total
+                                            const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+                                            setDateRange({
+                                                start: threeMonthsAgo.toISOString().split('T')[0],
+                                                end: today.toISOString().split('T')[0],
+                                                expectedMonths: 3
+                                            });
+                                        }}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                    >
+                                        Last 3 Mo
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const today = new Date();
+                                            // Go back to the 1st of the month, 11 months ago
+                                            // This gives us: current month + 11 previous months = 12 months total
+                                            const twelveMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 11, 1);
+                                            setDateRange({
+                                                start: twelveMonthsAgo.toISOString().split('T')[0],
+                                                end: today.toISOString().split('T')[0],
+                                                expectedMonths: 12
+                                            });
+                                        }}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                    >
+                                        Last 12 Mo
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const today = new Date();
+                                            const yearStart = new Date(today.getFullYear(), 0, 1);
+                                            setDateRange({
+                                                start: yearStart.toISOString().split('T')[0],
+                                                end: today.toISOString().split('T')[0]
+                                            });
+                                        }}
+                                        className={`px-3 py-1 text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                    >
+                                        Year to Date
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const today = new Date();
+                                            const currentYear = today.getFullYear();
+                                            const lastYear = new Date(currentYear - 1, 0, 1);
+                                            const lastYearEnd = new Date(currentYear - 1, 11, 31);
+                                            setDateRange({
+                                                start: lastYear.toISOString().split('T')[0],
+                                                end: lastYearEnd.toISOString().split('T')[0]
+                                            });
+                                        }}
+                                        className={`px-3 py-1 text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                    >
+                                        Last Year
+                                    </button>
+                                </div>
+                                
+                                {/* Income View Toggle */}
+                                <div className="flex flex-wrap gap-2 pt-3 mt-3 border-t border-gray-600">
+                                    <span className={`text-xs sm:text-sm font-medium ${labelClass} self-center`}>Income View:</span>
+                                    <button
+                                        onClick={() => setIncomeView('options')}
+                                        className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
+                                            incomeView === 'options'
+                                                ? 'bg-blue-500 text-white'
+                                                : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                        }`}
+                                    >
+                                        📊 Options
+                                    </button>
+                                    <button
+                                        onClick={() => setIncomeView('dividends')}
+                                        className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
+                                            incomeView === 'dividends'
+                                                ? 'bg-green-500 text-white'
+                                                : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                        }`}
+                                    >
+                                        💰 Dividends
+                                    </button>
+                                    <button
+                                        onClick={() => setIncomeView('both')}
+                                        className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
+                                            incomeView === 'both'
+                                                ? 'bg-purple-500 text-white'
+                                                : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                        }`}
+                                    >
+                                        📈 Both
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Summary Cards */}
+                        {(analysis || dividendAnalysis) && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-4 mb-4 sm:mb-6">
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                <h3 className={`text-xs sm:text-sm font-semibold mb-1 sm:mb-2 ${subtextClass}`}>
+                                    {incomeView === 'options' ? 'Options Premium' : incomeView === 'dividends' ? 'Dividend Income' : 'Total Income'}
+                                </h3>
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-green-600">
+                                    ${(() => {
+                                        if (incomeView === 'options') {
+                                            return analysis?.totalPremium?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00';
+                                        } else if (incomeView === 'dividends') {
+                                            return dividendAnalysis?.totalDividends?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00';
+                                        } else {
+                                            const total = (analysis?.totalPremium || 0) + (dividendAnalysis?.totalDividends || 0);
+                                            return total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        }
+                                    })()}
+                                </p>
+                            </div>
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>Avg / Month</h3>
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-blue-600">
+                                    ${(() => {
+                                        let total = 0;
+                                        if (incomeView === 'options' && analysis) total = analysis.totalPremium;
+                                        else if (incomeView === 'dividends' && dividendAnalysis) total = dividendAnalysis.totalDividends;
+                                        else if (incomeView === 'both') total = (analysis?.totalPremium || 0) + (dividendAnalysis?.totalDividends || 0);
+                                        const months = getMonthsCount(dateRange, analysis, dividendAnalysis, incomeView);
+                                        return (total / months).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                    })()}
+                                </p>
+                                <p className={`text-xs mt-1 ${subtextClass}`}>
+                                    {(() => {
+                                        const months = getMonthsCount(dateRange, analysis, dividendAnalysis, incomeView);
+                                        const rounded = Math.round(months * 10) / 10;
+                                        return `over ${rounded} month${rounded !== 1 ? 's' : ''}`;
+                                    })()}
+                                </p>
+                            </div>
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>
+                                    {incomeView === 'dividends' ? 'Est. Dividend Tax' : 'Est. Tax'}
+                                </h3>
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-red-600">
+                                    ${(() => {
+                                        if (incomeView === 'options') {
+                                            return analysis?.totalTax?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00';
+                                        } else if (incomeView === 'dividends') {
+                                            const dividendTax = (dividendAnalysis?.totalDividends || 0) * 0.15;
+                                            return dividendTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        } else {
+                                            const optionsTax = analysis?.totalTax || 0;
+                                            const dividendTax = (dividendAnalysis?.totalDividends || 0) * 0.15;
+                                            const combinedTax = optionsTax + dividendTax;
+                                            return combinedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        }
+                                    })()}
+                                </p>
+                                {incomeView === 'options' && (
+                                    <p className={`text-xs mt-1 ${subtextClass}`}>
+                                        ST: ${analysis?.totalTaxShortTerm?.toFixed(0) || '0'} | LT: ${analysis?.totalTaxLongTerm?.toFixed(0) || '0'}
+                                    </p>
+                                )}
+                                {incomeView === 'dividends' && (
+                                    <p className={`text-xs mt-1 ${subtextClass}`}>
+                                        Qualified @ 15%
+                                    </p>
+                                )}
+                                {incomeView === 'both' && (
+                                    <p className={`text-xs mt-1 ${subtextClass}`}>
+                                        Options: ${analysis?.totalTax?.toFixed(0) || '0'} | Dividends: ${((dividendAnalysis?.totalDividends || 0) * 0.15).toFixed(0)}
+                                    </p>
+                                )}
+                            </div>
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>Positions</h3>
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-blue-600">{analysis?.totalPositions || 0}</p>
+                                <p className={`text-xs mt-1 ${subtextClass}`}>
+                                    {analysis?.totalCCs || 0} CCs / {analysis?.totalCSPs || 0} CSPs • {analysis?.totalRolls || 0} rolls
+                                </p>
+                            </div>
+                            <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                <h3 className={`text-sm font-semibold mb-2 ${subtextClass}`}>
+                                    {incomeView === 'dividends' ? 'Dividends After Tax' : 'Net After Tax'}
+                                </h3>
+                                <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-purple-600">
+                                    ${(() => {
+                                        if (incomeView === 'options') {
+                                            const optionsNet = (analysis?.totalPremium || 0) - (analysis?.totalTax || 0);
+                                            return optionsNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        } else if (incomeView === 'dividends') {
+                                            const dividendTax = (dividendAnalysis?.totalDividends || 0) * 0.15;
+                                            const dividendNet = (dividendAnalysis?.totalDividends || 0) - dividendTax;
+                                            return dividendNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        } else {
+                                            const optionsNet = (analysis?.totalPremium || 0) - (analysis?.totalTax || 0);
+                                            const dividendTax = (dividendAnalysis?.totalDividends || 0) * 0.15;
+                                            const dividendNet = (dividendAnalysis?.totalDividends || 0) - dividendTax;
+                                            const combinedNet = optionsNet + dividendNet;
+                                            return combinedNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                        }
+                                    })()}
+                                </p>
+                            </div>
+                        </div>
+                        )}
+
+                        {/* Active Positions - Live Tracker (Options only) */}
+                        {incomeView !== 'dividends' && getActivePositions().length > 0 && (
+                            <div className={`rounded-lg shadow-md p-6 mb-6 border-2 ${darkMode ? 'border-green-500 bg-gray-800' : 'border-green-400 bg-white'}`}>
+                                <div className="flex justify-between items-center mb-4">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                                        <h2 className={`text-xl font-semibold ${textClass}`}>
+                                            Active Positions ({getActivePositions().length})
+                                        </h2>
+                                    </div>
+                                    <div className={`text-sm ${subtextClass}`}>
+                                        💡 Enter current prices to see ITM/OTM status
+                                    </div>
+                                </div>
+                                
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-50'}>
+                                            <tr>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Ticker</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Current Price</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Strike</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Distance</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Strategy</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Contracts</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Premium</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Expiration</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Days Left</th>
+                                                <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
+                                            {(() => {
+                                                const positions = getActivePositions().sort((a, b) => new Date(a.expiration) - new Date(b.expiration));
+                                                const seenTickers = new Set();
+                                                
+                                                return positions.map((trade, idx) => {
+                                                    const currentPrice = stockPrices[trade.symbol]?.price;
+                                                    const strikePrice = parseFloat(trade.strikePrice);
+                                                    let status = '';
+                                                    let statusColor = subtextClass;
+                                                    
+                                                    // Check if this is the first occurrence of this ticker
+                                                    const isFirstOccurrence = !seenTickers.has(trade.symbol);
+                                                    if (isFirstOccurrence) {
+                                                        seenTickers.add(trade.symbol);
+                                                    }
+                                                    
+                                                    // Calculate distance to strike
+                                                    let distancePercent = null;
+                                                    let distanceColor = subtextClass;
+                                                    let distanceText = '-';
+                                                    
+                                                    if (currentPrice && strikePrice) {
+                                                        distancePercent = Math.abs(((currentPrice - strikePrice) / strikePrice) * 100);
+                                                        
+                                                        // Color coding for distance
+                                                        if (distancePercent >= 25) {
+                                                            distanceColor = 'text-green-600 font-semibold';
+                                                        } else if (distancePercent >= 15) {
+                                                            distanceColor = 'text-yellow-600 font-semibold';
+                                                        } else {
+                                                            distanceColor = 'text-red-600 font-semibold';
+                                                        }
+                                                        
+                                                        distanceText = distancePercent.toFixed(1) + '%';
+                                                    }
+                                                    
+                                                    // Calculate DTE (Days to Expiration)
+                                                    const daysToExpiry = Math.ceil((new Date(trade.expiration) - new Date()) / (1000 * 60 * 60 * 24));
+                                                    let dteColor = subtextClass;
+                                                    
+                                                    // Color coding for DTE
+                                                    if (daysToExpiry > 21) {
+                                                        dteColor = 'text-green-600 font-semibold';
+                                                    } else if (daysToExpiry >= 14) {
+                                                        dteColor = 'text-yellow-600 font-semibold';
+                                                    } else if (daysToExpiry >= 7) {
+                                                        dteColor = 'text-orange-600 font-semibold';
+                                                    } else {
+                                                        dteColor = 'text-red-600 font-semibold';
+                                                    }
+                                                    
+                                                    if (!currentPrice || currentPrice <= 0) {
+                                                        status = loadingPrices ? 'Loading...' : 'Price N/A';
+                                                        statusColor = 'text-gray-400';
+                                                    } else if (currentPrice && strikePrice) {
+                                                        if (trade.strategy === 'Covered Call') {
+                                                            // ITM if stock price > strike (likely to be called away)
+                                                            if (currentPrice > strikePrice) {
+                                                                status = 'ITM ⚠️';
+                                                                statusColor = 'text-orange-600';
+                                                            } else {
+                                                                status = 'OTM ✓';
+                                                                statusColor = 'text-green-600';
+                                                            }
+                                                        } else if (trade.strategy === 'Cash Secured Put') {
+                                                            // ITM if stock price < strike (likely to be assigned)
+                                                            if (currentPrice < strikePrice) {
+                                                                status = 'ITM ⚠️';
+                                                                statusColor = 'text-orange-600';
+                                                            } else {
+                                                                status = 'OTM ✓';
+                                                                statusColor = 'text-green-600';
+                                                            }
+                                                        }
+                                                    }
+                                                    
+                                                    return (
+                                                        <tr key={idx} className={`${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'} ${daysToExpiry <= 7 ? (darkMode ? 'bg-yellow-900 bg-opacity-20' : 'bg-yellow-50') : ''}`}>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm font-bold ${textClass}`}>
+                                                                {trade.symbol}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap`}>
+                                                                {isFirstOccurrence ? (
+                                                                    <div className="flex items-center gap-1">
+                                                                        <input
+                                                                            type="number"
+                                                                            step="0.01"
+                                                                            placeholder="Enter price"
+                                                                            value={stockPrices[trade.symbol]?.price || ''}
+                                                                            onChange={(e) => updateManualPrice(trade.symbol, e.target.value)}
+                                                                            className={`w-24 px-2 py-1 text-sm border rounded ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                                                                        />
+                                                                        {stockPrices[trade.symbol]?.manual && (
+                                                                            <span className="text-xs text-blue-500">✓</span>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <span className={`text-sm font-semibold ${textClass}`}>
+                                                                        {stockPrices[trade.symbol]?.price 
+                                                                            ? `$${stockPrices[trade.symbol].price.toFixed(2)}` 
+                                                                            : '-'}
+                                                                    </span>
+                                                                )}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>
+                                                                ${trade.strikePrice}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${distanceColor}`}>
+                                                                {distanceText}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>
+                                                                {trade.strategy}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>
+                                                                {trade.quantity}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm text-green-600`}>
+                                                                ${Math.abs(trade.amount).toFixed(2)}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>
+                                                                {trade.expiration}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${dteColor}`}>
+                                                                {daysToExpiry}d
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold ${statusColor}`}>
+                                                                {status}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                });
+                                            })()}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <p className={`text-xs mt-4 ${subtextClass}`}>
+                                    💡 <strong>Enter price once per ticker</strong> - if you have multiple positions in the same stock, enter the price in the first row and it applies to all. <strong>Distance:</strong> Green (≥25% safe), Yellow (15-25% caution), Red (&lt;15% close). 
+                                    <strong>Days Left:</strong> Green (&gt;21d safe), Yellow (14-21d watch), Orange (7-13d urgent), Red (&lt;7d critical).
+                                    <strong>Status:</strong> ITM ⚠️ = In the Money (at risk), OTM ✓ = Out of the Money (safe).
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Add Trade Form */}
+                        {showForm && (
+                        <div className={`rounded-lg shadow-md p-6 mb-6 ${cardClass}`}>
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className={`text-xl font-semibold ${textClass}`}>
+                                    {editingIndex !== null ? 'Edit Trade' : 'Add Trades'}
+                                </h2>
+                                <div className="flex gap-2">
+                                    {editingIndex === null && (
+                                        <button
+                                            onClick={() => setBulkMode(!bulkMode)}
+                                            className={`px-4 py-2 rounded ${bulkMode ? 'bg-purple-500 text-white' : darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700'}`}
+                                        >
+                                            {bulkMode ? '⚡ Bulk ON' : 'Bulk Mode'}
+                                        </button>
+                                    )}
+                                    {editingIndex !== null && (
+                                        <button
+                                            onClick={() => {
+                                                setEditingIndex(null);
+                                                setShowForm(false);
+                                                setFormData({
+                                                    date: new Date().toISOString().split('T')[0],
+                                                    symbol: '',
+                                                    strategy: 'Covered Call',
+                                                    contracts: 1,
+                                                    premium: '',
+                                                    strikePrice: '',
+                                                    expiration: '',
+                                                    outcome: 'win'
+                                                });
+                                            }}
+                                            className={`px-4 py-2 rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-500 text-white hover:bg-gray-600'}`}
+                                        >
+                                            Cancel
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            <>
+                                    {editingIndex !== null && (
+                                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                                            <p className="text-sm text-blue-800">
+                                                <strong>Editing:</strong> Update fields and click "Update Trade" to save changes.
+                                            </p>
+                                        </div>
+                                    )}
+                                    {bulkMode && editingIndex === null && (
+                                        <div className="mb-4 p-3 bg-purple-50 border border-purple-200 rounded">
+                                            <p className="text-sm text-purple-800">
+                                                <strong>Bulk Mode:</strong> Form stays open after adding. Perfect for historical data!
+                                            </p>
+                                        </div>
+                                    )}
+                                    <form onSubmit={handleAddTrade} className="space-y-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                            <div>
+                                                <label className={`block text-sm font-medium mb-1 ${labelClass}`}>Date</label>
+                                                <input
+                                                    type="date"
+                                                    value={formData.date}
+                                                    onChange={(e) => handleFormChange('date', e.target.value)}
+                                                    className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                                    required
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className={`block text-sm font-medium mb-1 ${labelClass}`}>Ticker</label>
+                                                <input
+                                                    type="text"
+                                                    value={formData.symbol}
+                                                    onChange={(e) => handleFormChange('symbol', e.target.value.toUpperCase())}
+                                                    placeholder="AAPL"
+                                                    className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase ${inputClass}`}
+                                                    required
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className={`block text-sm font-medium mb-1 ${labelClass}`}>Strategy</label>
+                                                <select
+                                                    value={formData.strategy}
+                                                    onChange={(e) => handleFormChange('strategy', e.target.value)}
+                                                    className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                                >
+                                                    <option value="Covered Call">Covered Call</option>
+                                                    <option value="Cash Secured Put">Cash Secured Put</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className={`block text-sm font-medium mb-1 ${labelClass}`}>Contracts</label>
+                                                <input
+                                                    type="number"
+                                                    value={formData.contracts}
+                                                    onChange={(e) => handleFormChange('contracts', e.target.value)}
+                                                    min="1"
+                                                    className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                                    required
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className={`block text-sm font-medium mb-1 ${labelClass}`}>
+                                                    Premium ($) <span className="text-red-500">*</span>
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    value={formData.premium}
+                                                    onChange={(e) => handleFormChange('premium', e.target.value)}
+                                                    placeholder="150.00"
+                                                    step="0.01"
+                                                    min="0"
+                                                    className={`w-full px-3 py-2 border-2 border-blue-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                                    required
+                                                    autoFocus={bulkMode}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className={`block text-sm font-medium mb-1 ${labelClass}`}>Strike ($)</label>
+                                                <input
+                                                    type="number"
+                                                    value={formData.strikePrice}
+                                                    onChange={(e) => handleFormChange('strikePrice', e.target.value)}
+                                                    placeholder="180.00"
+                                                    step="0.01"
+                                                    className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className={`block text-sm font-medium mb-1 ${labelClass}`}>Expiration</label>
+                                                <input
+                                                    type="date"
+                                                    value={formData.expiration}
+                                                    onChange={(e) => handleFormChange('expiration', e.target.value)}
+                                                    className={`w-full px-3 py-2 border-2 border-blue-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className={`block text-sm font-medium mb-1 ${labelClass}`}>Outcome</label>
+                                                <select
+                                                    value={formData.outcome}
+                                                    onChange={(e) => handleFormChange('outcome', e.target.value)}
+                                                    className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClass}`}
+                                                >
+                                                    <option value="win">Win (Kept Premium)</option>
+                                                    <option value="loss">Loss (Bought Back)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="submit"
+                                            className={`${editingIndex !== null ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'} text-white px-6 py-2 rounded font-medium`}
+                                        >
+                                            {editingIndex !== null ? 'Update Trade' : (bulkMode ? '+ Add & Continue' : 'Add Trade')}
+                                        </button>
+                                    </form>
+                                </>
+
+                            {trades.length > 0 && (
+                                <div className={`mt-4 pt-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                                    <div className="flex justify-between items-center">
+                                        <span className={subtextClass}>{trades.length} total trades</span>
+                                        <button
+                                            onClick={clearData}
+                                            className="text-red-500 hover:text-red-700 text-sm"
+                                        >
+                                            Clear All
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        )}
+
+                        {analysis && (
+                            <>
+                                {/* Tax Settings */}
+                                <div className={`rounded-lg shadow-md p-6 mb-6 ${cardClass}`}>
+                                    <h2 className={`text-xl font-semibold mb-4 ${textClass}`}>Tax Settings</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className={`block text-sm font-medium mb-2 ${labelClass}`}>
+                                                Short-Term Rate (%)
+                                            </label>
+                                            <input
+                                                type="number"
+                                                value={taxRates.shortTerm}
+                                                onChange={(e) => setTaxRates(prev => ({ ...prev, shortTerm: parseFloat(e.target.value) || 0 }))}
+                                                className={`w-full px-3 py-2 border rounded ${inputClass}`}
+                                                step="0.1"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className={`block text-sm font-medium mb-2 ${labelClass}`}>
+                                                Long-Term Rate (%)
+                                            </label>
+                                            <input
+                                                type="number"
+                                                value={taxRates.longTerm}
+                                                onChange={(e) => setTaxRates(prev => ({ ...prev, longTerm: parseFloat(e.target.value) || 0 }))}
+                                                className={`w-full px-3 py-2 border rounded ${inputClass}`}
+                                                step="0.1"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Charts */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                                    <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                        <div style={{ height: '300px' }}>
+                                            <canvas ref={chartRefIncome}></canvas>
+                                        </div>
+                                    </div>
+                                    <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                        <div style={{ height: '300px' }}>
+                                            <canvas ref={chartRefTicker}></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Performance by Ticker - Options Only */}
+                                {incomeView !== 'dividends' && analysis && (
+                                    <div className={`rounded-lg shadow-md p-6 mb-6 ${cardClass}`}>
+                                        <h2 className={`text-xl font-semibold mb-4 ${textClass}`}>Performance by Ticker</h2>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full divide-y divide-gray-200">
+                                            <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-50'}>
+                                                <tr>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Ticker</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Premium</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Trades</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Calls</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Puts</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Win Rate</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
+                                                {analysis.byTicker
+                                                    .sort((a, b) => b.totalPremium - a.totalPremium)
+                                                    .map((ticker, idx) => (
+                                                        <tr key={idx} className={darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${textClass}`}>{ticker.ticker}</td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${textClass}`}>
+                                                                ${ticker.totalPremium.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                            </td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>{ticker.trades.length}</td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>{ticker.coveredCalls}</td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>{ticker.cashSecuredPuts}</td>
+                                                            <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>
+                                                                {ticker.wins + ticker.losses > 0 
+                                                                    ? ((ticker.wins / (ticker.wins + ticker.losses)) * 100).toFixed(1) + '%'
+                                                                    : 'N/A'}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                )}
+
+                                {/* Dividend Breakdown - Dividends Only */}
+                                {incomeView !== 'options' && dividendAnalysis && (
+                                    <div className={`rounded-lg shadow-md p-6 mb-6 ${cardClass}`}>
+                                        <h2 className={`text-xl font-semibold mb-4 ${textClass}`}>Dividend Income by Ticker</h2>
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-full divide-y divide-gray-200">
+                                                <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-50'}>
+                                                    <tr>
+                                                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Ticker</th>
+                                                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Total Dividends</th>
+                                                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Payments</th>
+                                                        <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Avg Per Payment</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
+                                                    {dividendAnalysis.byTicker
+                                                        .sort((a, b) => b.totalDividends - a.totalDividends)
+                                                        .map((ticker, idx) => (
+                                                            <tr key={idx} className={darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${textClass}`}>{ticker.ticker}</td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${textClass}`}>
+                                                                    ${ticker.totalDividends.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>{ticker.paymentCount}</td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>
+                                                                    ${(ticker.totalDividends / ticker.paymentCount).toFixed(2)}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* All Trades - Options Only */}
+                                {incomeView !== 'dividends' && (
+                                <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                    <h2 className={`text-xl font-semibold mb-4 ${textClass}`}>All Trades</h2>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full divide-y divide-gray-200">
+                                            <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-50'}>
+                                                <tr>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Date</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Ticker</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Strategy</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Contracts</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Premium</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Strike</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Exp</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
+                                                {trades
+                                                    .sort((a, b) => b.dateObj - a.dateObj)
+                                                    .map((trade, idx) => {
+                                                        // Check if trade falls within date range filter
+                                                        let isInRange = true;
+                                                        
+                                                        if (dateRange.start) {
+                                                            const startDate = new Date(dateRange.start);
+                                                            isInRange = isInRange && trade.dateObj >= startDate;
+                                                        }
+                                                        
+                                                        if (dateRange.end) {
+                                                            const endDate = new Date(dateRange.end);
+                                                            endDate.setHours(23, 59, 59, 999);
+                                                            isInRange = isInRange && trade.dateObj <= endDate;
+                                                        }
+                                                        
+                                                        // Apply highlight styling if in range
+                                                        const highlightClass = isInRange && (dateRange.start || dateRange.end)
+                                                            ? (darkMode ? 'bg-blue-900 bg-opacity-30 border-l-4 border-blue-500' : 'bg-blue-50 border-l-4 border-blue-400')
+                                                            : '';
+                                                        
+                                                        return (
+                                                            <tr key={idx} className={`${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'} ${highlightClass}`}>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${textClass}`}>{trade.date}</td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${textClass}`}>{trade.symbol}</td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>{trade.strategy}</td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>{trade.quantity}</td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm`}>
+                                                                    <span className={trade.amount > 0 ? 'text-green-600' : 'text-red-600'}>
+                                                                        ${Math.abs(trade.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                    </span>
+                                                                </td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>
+                                                                    {trade.strikePrice ? '$' + trade.strikePrice : '-'}
+                                                                </td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${subtextClass}`}>
+                                                                    {trade.expiration || '-'}
+                                                                </td>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                                    <div className="flex gap-2">
+                                                                        <button
+                                                                            onClick={() => rollTrade(trades.indexOf(trade))}
+                                                                            className="text-green-600 hover:text-green-900 font-medium"
+                                                                        >
+                                                                            Roll
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => editTrade(trades.indexOf(trade))}
+                                                                            className="text-blue-600 hover:text-blue-900"
+                                                                        >
+                                                                            Edit
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => deleteTrade(trades.indexOf(trade))}
+                                                                            className="text-red-600 hover:text-red-900"
+                                                                        >
+                                                                            Delete
+                                                                        </button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                )}
+
+                                {/* All Dividend Payments - Dividends Only */}
+                                {incomeView !== 'options' && dividends.length > 0 && (
+                                <div className={`rounded-lg shadow-md p-3 sm:p-6 ${cardClass}`}>
+                                    <h2 className={`text-xl font-semibold mb-4 ${textClass}`}>All Dividend Payments</h2>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full divide-y divide-gray-200">
+                                            <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-50'}>
+                                                <tr>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Date</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Ticker</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Amount</th>
+                                                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase ${subtextClass}`}>Description</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
+                                                {dividends
+                                                    .sort((a, b) => b.dateObj - a.dateObj)
+                                                    .map((dividend, idx) => {
+                                                        // Check if dividend falls within date range filter
+                                                        let isInRange = true;
+                                                        
+                                                        if (dateRange.start) {
+                                                            const startDate = new Date(dateRange.start);
+                                                            isInRange = isInRange && dividend.dateObj >= startDate;
+                                                        }
+                                                        
+                                                        if (dateRange.end) {
+                                                            const endDate = new Date(dateRange.end);
+                                                            endDate.setHours(23, 59, 59, 999);
+                                                            isInRange = isInRange && dividend.dateObj <= endDate;
+                                                        }
+                                                        
+                                                        // Apply highlight styling if in range
+                                                        const highlightClass = isInRange && (dateRange.start || dateRange.end)
+                                                            ? (darkMode ? 'bg-blue-900 bg-opacity-30 border-l-4 border-blue-500' : 'bg-blue-50 border-l-4 border-blue-400')
+                                                            : '';
+                                                        
+                                                        return (
+                                                            <tr key={idx} className={`${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'} ${highlightClass}`}>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm ${textClass}`}>{dividend.date}</td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${textClass}`}>{dividend.symbol}</td>
+                                                                <td className={`px-6 py-4 whitespace-nowrap text-sm text-green-600`}>
+                                                                    ${dividend.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </td>
+                                                                <td className={`px-6 py-4 text-sm ${subtextClass}`}>{dividend.description}</td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                )}
+                            </>
+                        )}
+
+                        {!analysis && !dividendAnalysis && (
+                            <div className={`rounded-lg shadow-md p-12 text-center ${cardClass}`}>
+                                <svg className={`mx-auto h-12 w-12 mb-4 ${subtextClass}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                </svg>
+                                <h3 className={`text-lg font-medium mb-2 ${textClass}`}>No data yet</h3>
+                                <p className={subtextClass}>Upload a CSV or click "+ New Trade" to get started</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<OptionsTracker />, document.getElementById('root'));
+    </script>
+    
+    <script>
+        // Register service worker for PWA functionality
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./service-worker.js')
+                    .then(registration => console.log('Service Worker registered'))
+                    .catch(err => console.log('Service Worker registration failed:', err));
+            });
+        }
+    </script>
+</body>
+</html>
