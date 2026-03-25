@@ -94,7 +94,7 @@
         };
 
         // Group trades for analysis
-        const analyzeTrades = (trades) => {
+        const analyzeTrades = (trades, customTaxRates = { shortTerm: 0.4075, longTerm: 0.2075 }) => {
             const byTicker = {};
             const byMonth = {};
             let totalPremium = 0;
@@ -169,7 +169,10 @@
                 // Tax estimation (only on positive premiums collected)
                 if (premium > 0) {
                     const holdingDays = 30; // Conservative estimate for options
-                    const taxCalc = calculateTax(premium, holdingDays);
+                    const taxCalc = calculateTax(premium, holdingDays, { 
+                        shortTerm: customTaxRates.shortTerm / 100, 
+                        longTerm: customTaxRates.longTerm / 100 
+                    });
                     if (taxCalc.isLongTerm) {
                         totalTaxLongTerm += taxCalc.tax;
                     } else {
@@ -226,10 +229,11 @@
         };
 
         // Analyze dividends
-        const analyzeDividends = (dividends) => {
+        const analyzeDividends = (dividends, customTaxRates = { shortTerm: 0.4075, longTerm: 0.2075 }) => {
             const byTicker = {};
             const byMonth = {};
             let totalDividends = 0;
+            let totalDividendTax = 0;
 
             dividends.forEach(dividend => {
                 const ticker = dividend.symbol || 'UNKNOWN';
@@ -254,12 +258,16 @@
                 byMonth[month].count++;
 
                 totalDividends += dividend.amount;
+                
+                // Tax on dividends (assume qualified, use long-term rate)
+                totalDividendTax += dividend.amount * (customTaxRates.longTerm / 100);
             });
 
             return {
                 byTicker: Object.values(byTicker),
                 byMonth: Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month)),
-                totalDividends
+                totalDividends,
+                totalDividendTax
             };
         };
 
@@ -731,10 +739,10 @@
                         filteredDividends = filteredDividends.filter(d => d.dateObj <= endDate);
                     }
                     
-                    const analyzed = analyzeTrades(filteredTrades);
+                    const analyzed = analyzeTrades(filteredTrades, taxRates);
                     setAnalysis(analyzed);
                     
-                    const dividendAnalyzed = analyzeDividends(filteredDividends);
+                    const dividendAnalyzed = analyzeDividends(filteredDividends, taxRates);
                     setDividendAnalysis(dividendAnalyzed);
                 }
             }, [trades, dividends, dateRange, taxRates]);
@@ -1358,11 +1366,10 @@
                                         if (incomeView === 'options') {
                                             return analysis?.totalTax?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00';
                                         } else if (incomeView === 'dividends') {
-                                            const dividendTax = (dividendAnalysis?.totalDividends || 0) * 0.15;
-                                            return dividendTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                            return (dividendAnalysis?.totalDividendTax || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                         } else {
                                             const optionsTax = analysis?.totalTax || 0;
-                                            const dividendTax = (dividendAnalysis?.totalDividends || 0) * 0.15;
+                                            const dividendTax = dividendAnalysis?.totalDividendTax || 0;
                                             const combinedTax = optionsTax + dividendTax;
                                             return combinedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                         }
@@ -1375,12 +1382,12 @@
                                 )}
                                 {incomeView === 'dividends' && (
                                     <p className={`text-xs mt-1 ${subtextClass}`}>
-                                        Qualified @ 15%
+                                        Qualified @ {taxRates.longTerm}%
                                     </p>
                                 )}
                                 {incomeView === 'both' && (
                                     <p className={`text-xs mt-1 ${subtextClass}`}>
-                                        Options: ${analysis?.totalTax?.toFixed(0) || '0'} | Dividends: ${((dividendAnalysis?.totalDividends || 0) * 0.15).toFixed(0)}
+                                        Options: ${analysis?.totalTax?.toFixed(0) || '0'} | Dividends: ${(dividendAnalysis?.totalDividendTax || 0).toFixed(0)}
                                     </p>
                                 )}
                             </div>
@@ -1401,13 +1408,11 @@
                                             const optionsNet = (analysis?.totalPremium || 0) - (analysis?.totalTax || 0);
                                             return optionsNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                         } else if (incomeView === 'dividends') {
-                                            const dividendTax = (dividendAnalysis?.totalDividends || 0) * 0.15;
-                                            const dividendNet = (dividendAnalysis?.totalDividends || 0) - dividendTax;
+                                            const dividendNet = (dividendAnalysis?.totalDividends || 0) - (dividendAnalysis?.totalDividendTax || 0);
                                             return dividendNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                         } else {
                                             const optionsNet = (analysis?.totalPremium || 0) - (analysis?.totalTax || 0);
-                                            const dividendTax = (dividendAnalysis?.totalDividends || 0) * 0.15;
-                                            const dividendNet = (dividendAnalysis?.totalDividends || 0) - dividendTax;
+                                            const dividendNet = (dividendAnalysis?.totalDividends || 0) - (dividendAnalysis?.totalDividendTax || 0);
                                             const combinedNet = optionsNet + dividendNet;
                                             return combinedNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                         }
