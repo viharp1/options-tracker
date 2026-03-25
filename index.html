@@ -332,12 +332,12 @@
             const [dividends, setDividends] = useState(() => loadFromStorage('optionsTrackerDividends', []));
             const [analysis, setAnalysis] = useState(null);
             const [dividendAnalysis, setDividendAnalysis] = useState(null);
-            const [taxRates, setTaxRates] = useState(() => loadFromStorage('optionsTrackerTaxRates', { shortTerm: 24, longTerm: 15 }));
+            const [taxRates, setTaxRates] = useState(() => loadFromStorage('optionsTrackerTaxRates', { shortTerm: 40.75, longTerm: 20.75 }));
             const [showForm, setShowForm] = useState(false);
             const [bulkMode, setBulkMode] = useState(false);
             const [editingIndex, setEditingIndex] = useState(null);
             const [importStatus, setImportStatus] = useState(null);
-            const [darkMode, setDarkMode] = useState(true);
+            const [darkMode, setDarkMode] = useState(true); // Always dark mode
             const [dateRange, setDateRange] = useState({ start: '', end: '' });
             const [incomeView, setIncomeView] = useState('options'); // 'options', 'dividends', 'both'
             const [stockPrices, setStockPrices] = useState({});
@@ -771,7 +771,7 @@
                                 title: { 
                                     display: true, 
                                     text: 'Options Premium Income by Month',
-                                    color: darkMode ? '#fff' : '#000'
+                                    color: '#fff'
                                 }
                             },
                             scales: {
@@ -779,13 +779,13 @@
                                     beginAtZero: true,
                                     ticks: {
                                         callback: (value) => '$' + value.toLocaleString(),
-                                        color: darkMode ? '#9ca3af' : '#6b7280'
+                                        color: '#9ca3af'
                                     },
-                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                    grid: { color: '#374151' }
                                 },
                                 x: {
-                                    ticks: { color: darkMode ? '#9ca3af' : '#6b7280' },
-                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                    ticks: { color: '#9ca3af' },
+                                    grid: { color: '#374151' }
                                 }
                             }
                         }
@@ -812,7 +812,7 @@
                                 title: { 
                                     display: true, 
                                     text: 'Dividend Income by Month',
-                                    color: darkMode ? '#fff' : '#000'
+                                    color: '#fff'
                                 }
                             },
                             scales: {
@@ -820,13 +820,13 @@
                                     beginAtZero: true,
                                     ticks: {
                                         callback: (value) => '$' + value.toLocaleString(),
-                                        color: darkMode ? '#9ca3af' : '#6b7280'
+                                        color: '#9ca3af'
                                     },
-                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                    grid: { color: '#374151' }
                                 },
                                 x: {
-                                    ticks: { color: darkMode ? '#9ca3af' : '#6b7280' },
-                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                    ticks: { color: '#9ca3af' },
+                                    grid: { color: '#374151' }
                                 }
                             }
                         }
@@ -876,12 +876,12 @@
                             plugins: {
                                 legend: { 
                                     display: true,
-                                    labels: { color: darkMode ? '#fff' : '#000' }
+                                    labels: { color: '#fff' }
                                 },
                                 title: { 
                                     display: true, 
                                     text: 'Combined Income by Month',
-                                    color: darkMode ? '#fff' : '#000'
+                                    color: '#fff'
                                 }
                             },
                             scales: {
@@ -890,14 +890,14 @@
                                     beginAtZero: true,
                                     ticks: {
                                         callback: (value) => '$' + value.toLocaleString(),
-                                        color: darkMode ? '#9ca3af' : '#6b7280'
+                                        color: '#9ca3af'
                                     },
-                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                    grid: { color: '#374151' }
                                 },
                                 x: {
                                     stacked: true,
-                                    ticks: { color: darkMode ? '#9ca3af' : '#6b7280' },
-                                    grid: { color: darkMode ? '#374151' : '#e5e7eb' }
+                                    ticks: { color: '#9ca3af' },
+                                    grid: { color: '#374151' }
                                 }
                             }
                         }
@@ -965,7 +965,7 @@
                                     display: true,
                                     position: 'bottom',
                                     labels: {
-                                        color: darkMode ? '#fff' : '#000',
+                                        color: '#fff',
                                         padding: 15,
                                         font: { size: 12 }
                                     }
@@ -973,7 +973,7 @@
                                 title: { 
                                     display: true, 
                                     text: 'Net Premium: Covered Calls vs Cash Secured Puts',
-                                    color: darkMode ? '#fff' : '#000',
+                                    color: '#fff',
                                     font: { size: 14 }
                                 },
                                 tooltip: {
@@ -1021,7 +1021,7 @@
                                     display: true,
                                     position: 'bottom',
                                     labels: {
-                                        color: darkMode ? '#fff' : '#000',
+                                        color: '#fff',
                                         padding: 15,
                                         font: { size: 12 }
                                     }
@@ -1029,7 +1029,7 @@
                                 title: { 
                                     display: true, 
                                     text: 'Top 5 Dividend Payers',
-                                    color: darkMode ? '#fff' : '#000',
+                                    color: '#fff',
                                     font: { size: 14 }
                                 }
                             }
@@ -1085,7 +1085,7 @@
                                     display: true,
                                     position: 'bottom',
                                     labels: {
-                                        color: darkMode ? '#fff' : '#000',
+                                        color: '#fff',
                                         padding: 15,
                                         font: { size: 12 }
                                     }
@@ -1093,7 +1093,7 @@
                                 title: { 
                                     display: true, 
                                     text: 'Income Breakdown: Options vs Dividends',
-                                    color: darkMode ? '#fff' : '#000',
+                                    color: '#fff',
                                     font: { size: 14 }
                                 },
                                 tooltip: {
@@ -1113,14 +1113,15 @@
                 }
             }, [analysis, dividendAnalysis, darkMode, incomeView, dateRange, trades, dividends]);
 
-            const cardClass = darkMode ? 'bg-gray-800' : 'bg-white';
-            const textClass = darkMode ? 'text-white' : 'text-gray-800';
-            const subtextClass = darkMode ? 'text-gray-300' : 'text-gray-600';
-            const inputClass = darkMode ? 'bg-gray-800 border-gray-600 text-white [color-scheme:dark]' : 'bg-white border-gray-300 [color-scheme:light]';
-            const labelClass = darkMode ? 'text-gray-300' : 'text-gray-700';
+            // Always dark mode - no light mode option
+            const cardClass = 'bg-gray-800';
+            const textClass = 'text-white';
+            const subtextClass = 'text-gray-300';
+            const inputClass = 'bg-gray-800 border-gray-600 text-white [color-scheme:dark]';
+            const labelClass = 'text-gray-300';
 
             return (
-                <div className={`min-h-screen p-3 sm:p-6 ${darkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
+                <div className="min-h-screen p-3 sm:p-6 bg-gray-900">
                     <div className="max-w-7xl mx-auto">
                         {/* Header */}
                         <div className={`rounded-lg shadow-md p-4 sm:p-6 mb-4 sm:mb-6 ${cardClass}`}>
@@ -1142,12 +1143,6 @@
                                         className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 text-sm rounded flex-1 sm:flex-initial"
                                     >
                                         {showForm ? 'Close' : '+ New'}
-                                    </button>
-                                    <button
-                                        onClick={() => setDarkMode(!darkMode)}
-                                        className={`px-3 py-2 text-sm rounded ${darkMode ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-                                    >
-                                        {darkMode ? '☀️' : '🌙'}
                                     </button>
                                 </div>
                             </div>
@@ -1191,7 +1186,7 @@
                                     {(dateRange.start || dateRange.end) && (
                                         <button
                                             onClick={() => setDateRange({ start: '', end: '' })}
-                                            className={`w-full sm:w-auto px-3 py-1.5 text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                            className={`w-full sm:w-auto px-3 py-1.5 text-sm rounded 'bg-gray-700 text-gray-300 hover:bg-gray-600'`}
                                         >
                                             Clear Filter
                                         </button>
@@ -1211,7 +1206,7 @@
                                                 expectedMonths: 1
                                             });
                                         }}
-                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap 'bg-gray-700 text-gray-300 hover:bg-gray-600'`}
                                     >
                                         Last Month
                                     </button>
@@ -1227,7 +1222,7 @@
                                                 expectedMonths: 3
                                             });
                                         }}
-                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap 'bg-gray-700 text-gray-300 hover:bg-gray-600'`}
                                     >
                                         Last 3 Mo
                                     </button>
@@ -1243,7 +1238,7 @@
                                                 expectedMonths: 12
                                             });
                                         }}
-                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        className={`px-2 py-1 text-xs sm:text-sm rounded whitespace-nowrap 'bg-gray-700 text-gray-300 hover:bg-gray-600'`}
                                     >
                                         Last 12 Mo
                                     </button>
@@ -1256,7 +1251,7 @@
                                                 end: today.toISOString().split('T')[0]
                                             });
                                         }}
-                                        className={`px-3 py-1 text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        className={`px-3 py-1 text-sm rounded 'bg-gray-700 text-gray-300 hover:bg-gray-600'`}
                                     >
                                         Year to Date
                                     </button>
@@ -1271,7 +1266,7 @@
                                                 end: lastYearEnd.toISOString().split('T')[0]
                                             });
                                         }}
-                                        className={`px-3 py-1 text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        className={`px-3 py-1 text-sm rounded 'bg-gray-700 text-gray-300 hover:bg-gray-600'`}
                                     >
                                         Last Year
                                     </button>
@@ -1285,7 +1280,7 @@
                                         className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
                                             incomeView === 'options'
                                                 ? 'bg-blue-500 text-white'
-                                                : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                                         }`}
                                     >
                                         📊 Options
@@ -1295,7 +1290,7 @@
                                         className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
                                             incomeView === 'dividends'
                                                 ? 'bg-green-500 text-white'
-                                                : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                                         }`}
                                     >
                                         💰 Dividends
@@ -1305,7 +1300,7 @@
                                         className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium flex-1 sm:flex-initial ${
                                             incomeView === 'both'
                                                 ? 'bg-purple-500 text-white'
-                                                : darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                                         }`}
                                     >
                                         📈 Both
@@ -1773,32 +1768,69 @@
                         {analysis && (
                             <>
                                 {/* Tax Settings */}
-                                <div className={`rounded-lg shadow-md p-6 mb-6 ${cardClass}`}>
-                                    <h2 className={`text-xl font-semibold mb-4 ${textClass}`}>Tax Settings</h2>
+                                <div className={`rounded-lg shadow-md p-3 sm:p-6 mb-4 sm:mb-6 ${cardClass}`}>
+                                    <h2 className={`text-lg sm:text-xl font-semibold mb-3 sm:mb-4 ${textClass}`}>Tax Settings</h2>
+                                    
+                                    {/* Tax Presets */}
+                                    <div className="mb-4">
+                                        <p className={`text-xs sm:text-sm mb-2 ${subtextClass}`}>Quick Presets:</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                onClick={() => setTaxRates({ shortTerm: 29.75, longTerm: 15 })}
+                                                className={`px-3 py-1.5 text-xs sm:text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                            >
+                                                24% Bracket (MD)
+                                            </button>
+                                            <button
+                                                onClick={() => setTaxRates({ shortTerm: 37.75, longTerm: 20.75 })}
+                                                className={`px-3 py-1.5 text-xs sm:text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                            >
+                                                32% Bracket (MD)
+                                            </button>
+                                            <button
+                                                onClick={() => setTaxRates({ shortTerm: 40.75, longTerm: 20.75 })}
+                                                className={`px-3 py-1.5 text-xs sm:text-sm rounded bg-green-600 text-white hover:bg-green-700`}
+                                            >
+                                                35% Bracket (MD) ⭐
+                                            </button>
+                                            <button
+                                                onClick={() => setTaxRates({ shortTerm: 43.15, longTerm: 25.75 })}
+                                                className={`px-3 py-1.5 text-xs sm:text-sm rounded ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                            >
+                                                37% Bracket (MD)
+                                            </button>
+                                        </div>
+                                        <p className={`text-xs mt-2 ${subtextClass}`}>
+                                            Includes MD state tax (5.75%). ⭐ = Recommended for ~$250k income
+                                        </p>
+                                    </div>
+                                    
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div>
-                                            <label className={`block text-sm font-medium mb-2 ${labelClass}`}>
+                                            <label className={`block text-xs sm:text-sm font-medium mb-2 ${labelClass}`}>
                                                 Short-Term Rate (%)
                                             </label>
                                             <input
                                                 type="number"
                                                 value={taxRates.shortTerm}
                                                 onChange={(e) => setTaxRates(prev => ({ ...prev, shortTerm: parseFloat(e.target.value) || 0 }))}
-                                                className={`w-full px-3 py-2 border rounded ${inputClass}`}
+                                                className={`w-full px-3 py-2 text-sm border rounded ${inputClass}`}
                                                 step="0.1"
                                             />
+                                            <p className={`text-xs mt-1 ${subtextClass}`}>For options income (ordinary)</p>
                                         </div>
                                         <div>
-                                            <label className={`block text-sm font-medium mb-2 ${labelClass}`}>
+                                            <label className={`block text-xs sm:text-sm font-medium mb-2 ${labelClass}`}>
                                                 Long-Term Rate (%)
                                             </label>
                                             <input
                                                 type="number"
                                                 value={taxRates.longTerm}
                                                 onChange={(e) => setTaxRates(prev => ({ ...prev, longTerm: parseFloat(e.target.value) || 0 }))}
-                                                className={`w-full px-3 py-2 border rounded ${inputClass}`}
+                                                className={`w-full px-3 py-2 text-sm border rounded ${inputClass}`}
                                                 step="0.1"
                                             />
+                                            <p className={`text-xs mt-1 ${subtextClass}`}>For qualified dividends</p>
                                         </div>
                                     </div>
                                 </div>
