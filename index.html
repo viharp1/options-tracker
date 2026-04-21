@@ -165,21 +165,22 @@
                 byMonth[month].trades++;
 
                 totalPremium += premium; // Net total premium (includes buybacks as negatives)
-
-                // Tax estimation (only on positive premiums collected)
-                if (premium > 0) {
-                    const holdingDays = 30; // Conservative estimate for options
-                    const taxCalc = calculateTax(premium, holdingDays, { 
-                        shortTerm: customTaxRates.shortTerm / 100, 
-                        longTerm: customTaxRates.longTerm / 100 
-                    });
-                    if (taxCalc.isLongTerm) {
-                        totalTaxLongTerm += taxCalc.tax;
-                    } else {
-                        totalTaxShortTerm += taxCalc.tax;
-                    }
-                }
             });
+
+            // Calculate tax on NET premium only (not on each STO individually)
+            // This is correct for wheel strategy where BTC costs offset STO income
+            const holdingDays = 30; // Conservative estimate for options
+            if (totalPremium > 0) {
+                const taxCalc = calculateTax(totalPremium, holdingDays, { 
+                    shortTerm: customTaxRates.shortTerm / 100, 
+                    longTerm: customTaxRates.longTerm / 100 
+                });
+                if (taxCalc.isLongTerm) {
+                    totalTaxLongTerm = taxCalc.tax;
+                } else {
+                    totalTaxShortTerm = taxCalc.tax;
+                }
+            }
 
             return {
                 byTicker: Object.values(byTicker),
